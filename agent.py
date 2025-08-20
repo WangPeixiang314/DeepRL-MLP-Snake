@@ -8,7 +8,7 @@ from memory import PrioritizedReplayBuffer
 from model import DQN
 from help import safe_action_nb
 
-class DQNAgent:
+class DDQNAgent:
     def __init__(self, input_dim):
         # 模型相关
         self.policy_net = DQN(input_dim, Config.HIDDEN_LAYERS, Config.OUTPUT_DIM)
@@ -83,7 +83,7 @@ class DQNAgent:
                    else np.random.randint(Config.OUTPUT_DIM))
 
     def optimize_model(self):
-        """优化模型（采用优先级采样）"""
+        """优化模型（采用优先级采样和DDQN）"""
         if len(self.memory) < Config.BATCH_SIZE:
             return 0.0, []
         
@@ -97,9 +97,12 @@ class DQNAgent:
         # 计算当前状态的Q值
         state_q_values = self.policy_net(states).gather(1, actions.unsqueeze(1))
         
-        # 计算下一个状态的最大Q值
+        # DDQN改进：使用当前网络选择动作，目标网络评估价值
         with torch.no_grad():
-            next_q_values = self.target_net(next_states).max(1)[0]
+            # 使用当前网络选择下一个状态的最佳动作
+            next_actions = self.policy_net(next_states).max(1)[1].unsqueeze(1)
+            # 使用目标网络评估这些动作的价值
+            next_q_values = self.target_net(next_states).gather(1, next_actions).squeeze(1)
         
         # 计算期望Q值 (Bellman方程)
         expected_q_values = rewards + (1 - dones) * Config.GAMMA * next_q_values

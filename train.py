@@ -7,7 +7,7 @@ import numpy as np
 import pygame
 import torch
 
-from agent import DQNAgent
+from agent import DDQNAgent
 from config import Config
 from game import SnakeGame
 from training import TrainingPlotter, TrainingStats
@@ -44,7 +44,7 @@ def train(num_episodes=1000, visualize=True, verbose=True):
         # 获取初始状态以确定输入维度
         initial_state = game.get_state()
         input_dim = len(initial_state)
-        agent = DQNAgent(input_dim)
+        agent = DDQNAgent(input_dim)
         plotter = TrainingPlotter() if visualize else None
         stats = TrainingStats()
         
@@ -145,7 +145,7 @@ if __name__ == "__main__":
         game = SnakeGame()
         initial_state = game.get_state()
         input_dim = len(initial_state)
-        agent = DQNAgent(input_dim)
+        agent = DDQNAgent(input_dim)
         agent.save_model()
         pygame.quit()
         print("模型已保存，程序退出")

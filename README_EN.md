@@ -4,7 +4,7 @@ This is a Snake AI project trained using Deep Q-Network (DQN) with prioritized e
 
 ## Project Features
 
-- Uses Deep Q-Network (DQN) algorithm
+- Uses Double Deep Q-Network (DDQN) algorithm - **Upgraded!**
 - Implements prioritized experience replay mechanism
 - Employs Multi-Layer Perceptron (MLP) as neural network structure
 - Supports hyperparameter optimization
@@ -88,6 +88,12 @@ DeepRL-MLP-Snake/
 
 ## Technical Details
 
+### Algorithm Upgrade: DQN → DDQN
+This project has been upgraded to **Double Deep Q-Network (DDQN)** with key improvements:
+- **Reduced Q-value overestimation**: Uses current network for action selection and target network for value evaluation
+- **More stable learning**: Separates action selection and action evaluation processes
+- **Maintains existing advantages**: Still supports prioritized experience replay and anti-suicide mechanism
+
 ### State Representation
 
 The AI's state representation includes the following features:
@@ -117,6 +123,13 @@ Default 5-layer MLP network:
 - Input layer: Determined by state feature count
 - Hidden layers: 128 -> 64 -> 32 -> 16 -> 8
 - Output layer: 3 (go straight, turn right, turn left)
+
+### DDQN Algorithm Principle
+DDQN improves traditional DQN through:
+1. **Action Selection**: Uses current policy network to select best action for next state
+2. **Value Evaluation**: Uses target network to evaluate the value of selected action
+3. **Target Calculation**: `target = reward + γ * Q_target(next_state, argmax Q_policy(next_state))`
+4. **Loss Function**: Same as DQN, using smooth L1 loss
 
 ## License
 
