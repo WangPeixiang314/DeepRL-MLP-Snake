@@ -1,6 +1,11 @@
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import style
+import sys
+
+# 动态matplotlib显示支持
+plt.ion()  # 启用交互模式
 
 n_mean = 500
 
@@ -11,6 +16,39 @@ plt.rcParams['axes.unicode_minus'] = False
 # 设置图表样式
 style.use('ggplot')
 
+# ANSI颜色代码
+class Colors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+    @staticmethod
+    def disable():
+        Colors.HEADER = ''
+        Colors.OKBLUE = ''
+        Colors.OKCYAN = ''
+        Colors.OKGREEN = ''
+        Colors.WARNING = ''
+        Colors.FAIL = ''
+        Colors.ENDC = ''
+        Colors.BOLD = ''
+        Colors.UNDERLINE = ''
+
+# Windows系统可能需要特殊处理
+if sys.platform.startswith('win'):
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+    except:
+        Colors.disable()
+
 class TrainingStats:
     def __init__(self):
         # 训练数据存储
@@ -19,15 +57,17 @@ class TrainingStats:
         self.steps = []           # 每局步数
         self.losses = []          # 每局平均损失
         self.epsilons = []        # 每局探索率
+        self.final_lengths = []   # 每局最终蛇长度
         
         # 移动平均数据
         self.avg_scores = []      # 分数移动平均
         self.avg_rewards = []     # 奖励移动平均
         self.avg_steps = []       # 步数移动平均
         self.avg_losses = []      # 损失移动平均
+        self.avg_final_lengths = []  # 最终长度移动平均
         self.td_errors = []       # TD误差统计
     
-    def update(self, score, reward, steps, loss, epsilon, td_errors=None):
+    def update(self, score, reward, steps, loss, epsilon, final_length, td_errors=None):
         """更新统计数据"""
         # 记录当前局数据
         self.scores.append(score)
@@ -35,6 +75,7 @@ class TrainingStats:
         self.steps.append(steps)
         self.losses.append(loss)
         self.epsilons.append(epsilon)
+        self.final_lengths.append(final_length)
         
         # 记录TD误差统计
         if td_errors is not None and len(td_errors) > 0:
@@ -47,6 +88,7 @@ class TrainingStats:
             self.avg_rewards.append(np.mean(self.rewards[-window:]))
             self.avg_steps.append(np.mean(self.steps[-window:]))
             self.avg_losses.append(np.mean(self.losses[-window:]))
+            self.avg_final_lengths.append(np.mean(self.final_lengths[-window:]))
     
     def get_stats(self):
         """获取格式化统计数据"""
@@ -56,10 +98,12 @@ class TrainingStats:
             'steps': self.steps,
             'losses': self.losses,
             'epsilons': self.epsilons,
+            'final_lengths': self.final_lengths,
             'avg_scores': self.avg_scores,
             'avg_rewards': self.avg_rewards,
             'avg_steps': self.avg_steps,
-            'avg_losses': self.avg_losses
+            'avg_losses': self.avg_losses,
+            'avg_final_lengths': self.avg_final_lengths
         }
         
         if self.td_errors:
@@ -71,14 +115,22 @@ class TrainingStats:
 class TrainingPlotter:
     def __init__(self):
         # 创建4个子图
-        plt.ion()  # 开启交互模式
-        self.fig, self.axs = plt.subplots(2, 2, figsize=(12, 8))
-        self.fig.suptitle('蛇游戏AI训练指标')
+        try:
+            matplotlib.use('TkAgg')  # 使用TkAgg后端，更稳定
+            plt.ion()  # 开启交互模式
+            self.fig, self.axs = plt.subplots(2, 2, figsize=(12, 8))
+            self.fig.suptitle('蛇游戏AI训练指标')
+            self.initialized = True
+        except Exception as e:
+            print(f"警告: 无法初始化实时绘图: {e}")
+            self.initialized = False
+            self.fig = None
+            self.axs = None
         
-        # 初始化空图表
-        self.score_line, = self.axs[0, 0].plot([], [], 'b-', label='分数')
-        self.avg_score_line, = self.axs[0, 0].plot([], [], 'r-', label=f'{n_mean}局平均')
-        self.axs[0, 0].set_title('每局最终长度')
+        # 初始化空图表 - 第一个子图显示最终长度而非分数
+        self.length_line, = self.axs[0, 0].plot([], [], 'b-', label='最终长度')
+        self.avg_length_line, = self.axs[0, 0].plot([], [], 'r-', label=f'最近{n_mean}局平均')
+        self.axs[0, 0].set_title('每局游戏最终长度')
         self.axs[0, 0].set_xlabel('局数')
         self.axs[0, 0].set_ylabel('长度')
         self.axs[0, 0].legend()
@@ -101,6 +153,7 @@ class TrainingPlotter:
         self.axs[1, 1].set_title('训练指标')
         self.axs[1, 1].set_xlabel('局数')
         self.axs[1, 1].set_ylabel('值')
+        self.axs[1, 1].set_yscale('log')  # 设置y轴为对数坐标
         self.axs[1, 1].legend()
         self.axs[1, 1].grid(True, alpha=0.3)
         
@@ -110,9 +163,9 @@ class TrainingPlotter:
         """更新图表数据"""
         episodes = list(range(len(stats['scores'])))
         
-        # 更新分数图表
-        self.score_line.set_data(episodes, stats['scores'])
-        self.avg_score_line.set_data(episodes, stats['avg_scores'])
+        # 更新最终长度图表（第一个子图）
+        self.length_line.set_data(episodes, stats['final_lengths'])
+        self.avg_length_line.set_data(episodes, stats['avg_final_lengths'])
         self.axs[0, 0].relim()
         self.axs[0, 0].autoscale_view()
         
@@ -143,3 +196,43 @@ class TrainingPlotter:
     def close(self):
         """关闭图表窗口"""
         plt.close(self.fig)
+
+class ConsoleLogger:
+    def __init__(self):
+        self.episode_count = 0
+        
+    def print_training_header(self):
+        """打印训练标题"""
+        print(f"{Colors.HEADER}{Colors.BOLD}{'='*80}{Colors.ENDC}")
+        print(f"{Colors.HEADER}{Colors.BOLD}Dueling DDQN 训练系统{Colors.ENDC}")
+        print(f"{Colors.HEADER}{Colors.BOLD}{'='*80}{Colors.ENDC}")
+        
+    def print_episode_status(self, episode, score, avg_score, loss, epsilon, steps, lr):
+        """每5局打印一次训练状态"""
+        if episode % 5 == 0:
+            print(f"\n{Colors.OKCYAN}[回合 {episode:4d}] {Colors.ENDC}")
+            print(f"{Colors.OKGREEN}  当前得分: {score:3d} {Colors.ENDC}")
+            print(f"{Colors.OKBLUE}  平均得分: {avg_score:6.2f} {Colors.ENDC}")
+            print(f"{Colors.WARNING}  学习率:   {lr:.6f} {Colors.ENDC}")
+            print(f"{Colors.FAIL}  探索率:   {epsilon:.4f} {Colors.ENDC}")
+            print(f"{Colors.OKCYAN}  步数:     {steps:4d} {Colors.ENDC}")
+            print(f"{Colors.HEADER}{'-'*40}{Colors.ENDC}")
+    
+    def print_best_score(self, episode, score):
+        """打印最佳分数"""
+        print(f"{Colors.OKGREEN}{Colors.BOLD}新的最佳Dueling DQN模型已保存: 回合 {episode} 分数 {score}{Colors.ENDC}")
+    
+    def print_model_saved(self, filepath):
+        """打印模型保存信息"""
+        print(f"{Colors.OKBLUE}模型已保存: {filepath}{Colors.ENDC}")
+    
+    def print_training_complete(self, total_episodes, max_score, avg_score, total_time):
+        """打印训练完成信息"""
+        print(f"\n{Colors.HEADER}{Colors.BOLD}{'='*80}{Colors.ENDC}")
+        print(f"{Colors.HEADER}{Colors.BOLD}训练完成!{Colors.ENDC}")
+        print(f"{Colors.HEADER}{Colors.BOLD}{'='*80}{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}总训练时间: {total_time:.1f}秒{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}总训练局数: {total_episodes}{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}最高分数: {max_score}{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}最终平均分数: {avg_score:.2f}{Colors.ENDC}")
+        print(f"{Colors.HEADER}{'='*80}{Colors.ENDC}")

@@ -285,8 +285,8 @@ def get_direction_onehot_nb(direction):
     return direction_vec
 
 @njit_decorator
-def get_eight_direction_dangers_nb(head, snake, width, height, BLOCK_SIZE):
-    """八方向的三格危险检测"""
+def get_eight_direction_dangers_nb(head, snake, width, height, BLOCK_SIZE, steps=3):
+    """八方向的危险检查，可配置检查格子数量"""
     eight_directions = [
         (1, 0),   # 右
         (1, 1),   # 右下
@@ -298,12 +298,12 @@ def get_eight_direction_dangers_nb(head, snake, width, height, BLOCK_SIZE):
         (1, -1)   # 右上
     ]
     
-    direction_dangers = np.zeros(24, dtype=np.float32)  # 8方向 * 3格
+    direction_dangers = np.zeros(8 * steps, dtype=np.float32)
     for dir_idx, (dx, dy) in enumerate(eight_directions):
-        for step in range(1, 4):  # 检测1-3格距离
+        for step in range(1, steps + 1):  # 检测1-steps格距离
             check_x = head[0] + dx * BLOCK_SIZE * step
             check_y = head[1] + dy * BLOCK_SIZE * step
-            danger_idx = dir_idx * 3 + (step - 1)
+            danger_idx = dir_idx * steps + (step - 1)
             direction_dangers[danger_idx] = is_collision_nb(
                 snake, width, height, (check_x, check_y)
             )
@@ -330,18 +330,17 @@ def get_free_space_ratio_nb(snake, grid_area):
     return np.array([(grid_area - len(snake)) / grid_area], dtype=np.float32)
 
 @njit_decorator
-def get_local_grid_view_nb(head, snake, food, width, height, BLOCK_SIZE):
-    """以蛇头为中心的6*6局部网格状态"""
-    grid_view = np.zeros(36, dtype=np.float32)  # 6x6网格
-    grid_radius = 3  # 半径3格，共6x6区域
+def get_local_grid_view_nb(head, snake, food, width, height, BLOCK_SIZE, radius=3):
+    """以蛇头为中心的局部网格状态，可配置半径"""
+    grid_view = np.zeros((2 * radius) * (2 * radius), dtype=np.float32)
     center_x, center_y = head[0] // BLOCK_SIZE, head[1] // BLOCK_SIZE
     
-    for dx in range(-grid_radius, grid_radius):
-        for dy in range(-grid_radius, grid_radius):
+    for dx in range(-radius, radius):
+        for dy in range(-radius, radius):
             # 计算网格位置
             grid_x = center_x + dx
             grid_y = center_y + dy
-            idx = (dx + grid_radius) * 6 + (dy + grid_radius)
+            idx = (dx + radius) * (2 * radius) + (dy + radius)
             
             # 检查是否在边界内
             if (0 <= grid_x < (width // BLOCK_SIZE) and 
@@ -362,12 +361,39 @@ def get_local_grid_view_nb(head, snake, food, width, height, BLOCK_SIZE):
     return grid_view
 
 @njit_decorator
-def get_action_history_onehot_nb(action_history):
-    """当前的前五次的动作 (使用3维one-hot编码)"""
-    action_vec = np.zeros(15, dtype=np.float32)  # 5个动作 * 3维
-    start_idx = max(0, 5 - len(action_history))
+def get_all_grid_view_nb(snake, food, width, height, BLOCK_SIZE):
+    """获取整个地图的直接网格信息并展平为向量"""
+    grid_width = width // BLOCK_SIZE
+    grid_height = height // BLOCK_SIZE
+    grid_area = grid_width * grid_height
     
-    for i, action in enumerate(action_history[-5:]):
+    # 创建单通道地图
+    full_map = np.zeros(grid_area, dtype=np.float32)
+    
+    # 填充蛇身
+    for i in range(len(snake)):
+        segment_x = int(snake[i][0] // BLOCK_SIZE)
+        segment_y = int(snake[i][1] // BLOCK_SIZE)
+        if 0 <= segment_x < grid_width and 0 <= segment_y < grid_height:
+            idx = segment_y * grid_width + segment_x
+            full_map[idx] = 1.0
+    
+    # 填充食物
+    food_x = int(food[0] // BLOCK_SIZE)
+    food_y = int(food[1] // BLOCK_SIZE)
+    if 0 <= food_x < grid_width and 0 <= food_y < grid_height:
+        idx = food_y * grid_width + food_x
+        full_map[idx] = 0.5
+    
+    return full_map
+
+@njit_decorator
+def get_action_history_onehot_nb(action_history, history_length=5):
+    """当前的动作历史记录，可配置长度"""
+    action_vec = np.zeros(history_length * 3, dtype=np.float32)
+    start_idx = max(0, history_length - len(action_history))
+    
+    for i, action in enumerate(action_history[-history_length:]):
         action_idx = (start_idx + i) * 3
         if action == 0:  # 直行
             action_vec[action_idx] = 1.0

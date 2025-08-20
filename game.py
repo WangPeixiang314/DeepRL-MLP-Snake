@@ -8,7 +8,8 @@ from help import distance_nb, is_collision_nb, random_position_nb, place_food_nb
 from direction import Direction
 from help import get_head_pos_nb, get_food_pos_nb, get_relative_distance_nb, get_manhattan_distance_nb,\
     get_direction_onehot_nb, get_eight_direction_dangers_nb, get_boundary_distances_nb, get_snake_length_nb, \
-        get_free_space_ratio_nb, get_local_grid_view_nb, get_local_grid_view_nb, get_action_history_onehot_nb
+        get_free_space_ratio_nb, get_local_grid_view_nb, get_local_grid_view_nb, get_action_history_onehot_nb, get_all_grid_view_nb
+
 
 class Game:
     RIGHT = (1, 0)
@@ -77,8 +78,15 @@ class SnakeGame:
         return is_collision_nb(self.snake, self.width, self.height, pos)
     
     def get_state(self):
+        from config import Config
+        
         grid_area = Config.GRID_WIDTH * Config.GRID_HEIGHT
         grid_size = Config.BLOCK_SIZE
+        
+        # 使用config中的可配置参数
+        eight_direction_steps = Config.EIGHT_DIRECTION_STEPS
+        local_grid_radius = Config.LOCAL_GRID_RADIUS
+        action_history_length = Config.ACTION_HISTORY_LENGTH
         
         # 使用numba加速函数提取状态特征
         danger = np.array([
@@ -98,12 +106,13 @@ class SnakeGame:
             get_relative_distance_nb(self.head, self.food, self.width, self.height),
             get_manhattan_distance_nb(self.head, self.food, self.width, self.height),
             get_direction_onehot_nb(self.direction.value),
-            get_eight_direction_dangers_nb(self.head, self.snake, self.width, self.height, grid_size),
+            get_eight_direction_dangers_nb(self.head, self.snake, self.width, self.height, grid_size, eight_direction_steps),
             get_boundary_distances_nb(self.head, self.width, self.height),
             get_snake_length_nb(self.snake, grid_area),
             get_free_space_ratio_nb(self.snake, grid_area),
-            get_local_grid_view_nb(self.head, self.snake, self.food, self.width, self.height, grid_size),
-            get_action_history_onehot_nb(self.action_history)
+            get_local_grid_view_nb(self.head, self.snake, self.food, self.width, self.height, grid_size, local_grid_radius),
+            get_all_grid_view_nb(self.snake, self.food, self.width, self.height, grid_size),
+            get_action_history_onehot_nb(self.action_history, action_history_length)
         ])
     
     def step(self, action):
@@ -126,7 +135,7 @@ class SnakeGame:
         if len(self.action_history) > 5:
             self.action_history.pop(0)
 
-        # 1. 处理事件
+        # 1. 处理事件（仅在可视化模式下）
         if self.visualize:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
