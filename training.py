@@ -1,4 +1,3 @@
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import style
@@ -115,17 +114,9 @@ class TrainingStats:
 class TrainingPlotter:
     def __init__(self):
         # 创建4个子图
-        try:
-            matplotlib.use('TkAgg')  # 使用TkAgg后端，更稳定
-            plt.ion()  # 开启交互模式
-            self.fig, self.axs = plt.subplots(2, 2, figsize=(12, 8))
-            self.fig.suptitle('蛇游戏AI训练指标')
-            self.initialized = True
-        except Exception as e:
-            print(f"警告: 无法初始化实时绘图: {e}")
-            self.initialized = False
-            self.fig = None
-            self.axs = None
+        plt.ion()  # 开启交互模式
+        self.fig, self.axs = plt.subplots(2, 2, figsize=(12, 8))
+        self.fig.suptitle('蛇游戏AI训练指标')
         
         # 初始化空图表 - 第一个子图显示最终长度而非分数
         self.length_line, = self.axs[0, 0].plot([], [], 'b-', label='最终长度')

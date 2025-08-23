@@ -28,17 +28,19 @@ def get_state_size():
     return len(state)
 
 
-def train_dueling_dqn(max_episodes=None, model_path=None, visualize=True):
+def train_dueling_dqn(max_episodes=None, model_path=None, visualize=True, fresh_start=False):
     """训练Dueling Double DQN，支持自定义参数"""
     
     # 初始化
     state_size = get_state_size()
     agent = DuelingDDQNAgent(state_size)
     
-    # 如果提供了模型路径，尝试加载
-    if model_path and os.path.exists(model_path):
+    # 如果提供了模型路径且不是强制重新开始，尝试加载
+    if not fresh_start and model_path and os.path.exists(model_path):
         print(f"加载已有模型: {model_path}")
         agent.load_model(model_path)
+    elif fresh_start:
+        print("🔄 强制重新开始训练，跳过模型加载")
     
     game = SnakeGameAI(visualize=visualize)
     
@@ -289,6 +291,8 @@ if __name__ == "__main__":
                         help='是否显示游戏画面')
     parser.add_argument('--no-visualize', dest='visualize', action='store_false',
                         help='关闭游戏画面显示')
+    parser.add_argument('--fresh', action='store_true',
+                        help='强制重新开始训练，不加载旧模型')
     
     args = parser.parse_args()
     
@@ -297,6 +301,16 @@ if __name__ == "__main__":
     print(f"训练局数: {args.episodes if args.episodes else Config.MAX_EPISODES}")
     print(f"模型路径: {args.model_path if args.model_path else '新模型'}")
     print(f"可视化: {'开启' if args.visualize else '关闭'}")
+    print(f"强制重新开始: {'是' if args.fresh else '否'}")
+    
+    # 显示当前模型配置
+    print("=" * 50)
+    print("当前模型配置:")
+    print(f"  增强版模型: {'启用' if Config.USE_ENHANCED_MODEL else '禁用'}")
+    if Config.USE_ENHANCED_MODEL:
+        print(f"  激活函数: {Config.ENHANCED_ACTIVATION}")
+        print(f"  注意力机制: {'启用' if Config.USE_ATTENTION else '禁用'}")
+        print(f"  残差连接: {'启用' if Config.USE_RESIDUAL else '禁用'}")
     print("=" * 50)
     
     # 检查CUDA可用性
@@ -308,5 +322,6 @@ if __name__ == "__main__":
     train_dueling_dqn(
         max_episodes=args.episodes,
         model_path=args.model_path,
-        visualize=args.visualize
+        visualize=args.visualize,
+        fresh_start=args.fresh
     )

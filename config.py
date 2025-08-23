@@ -110,6 +110,12 @@ class Config:
     ENABLE_NOISY = False  # Noisy Networks (实验功能)
     ENABLE_DUELING_ANALYSIS = False  # Dueling网络分析模式
     
+    # ==================== 增强版模型配置 ====================
+    USE_ENHANCED_MODEL = True  # 使用增强版Dueling DQN
+    ENHANCED_ACTIVATION = 'swish'  # 激活函数: 'swish', 'gelu', 'relu'
+    USE_ATTENTION = True  # 启用注意力机制
+    USE_RESIDUAL = True  # 启用残差连接
+    
     @classmethod
     def get_model_filename(cls, episode, score, is_best=False):
         """生成模型文件名"""

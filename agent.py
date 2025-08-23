@@ -6,7 +6,7 @@ import torch.optim as optim
 
 from config import Config
 from memory import PrioritizedReplayBuffer
-from model import DuelingDQN
+from model import DuelingDQN, EnhancedDuelingDQN
 from help import safe_action_nb
 
 
@@ -20,9 +20,32 @@ class DuelingDDQNAgent:
         print(f"初始化Dueling Double DQN Agent")
         print(f"输入维度: {input_dim}")
 
-        # 模型相关 - 使用Dueling DQN
-        self.policy_net = DuelingDQN(input_dim, Config.HIDDEN_LAYERS, Config.OUTPUT_DIM)
-        self.target_net = DuelingDQN(input_dim, Config.HIDDEN_LAYERS, Config.OUTPUT_DIM)
+        # 根据配置选择模型类型
+        if Config.USE_ENHANCED_MODEL:
+            print("🚀 使用增强版Dueling DQN模型")
+            print(f"激活函数: {Config.ENHANCED_ACTIVATION}")
+            print(f"注意力机制: {'启用' if Config.USE_ATTENTION else '禁用'}")
+            print(f"残差连接: {'启用' if Config.USE_RESIDUAL else '禁用'}")
+            
+            self.policy_net = EnhancedDuelingDQN(
+                input_dim, 
+                Config.HIDDEN_LAYERS, 
+                Config.OUTPUT_DIM,
+                activation=Config.ENHANCED_ACTIVATION,
+                use_attention=Config.USE_ATTENTION
+            )
+            self.target_net = EnhancedDuelingDQN(
+                input_dim, 
+                Config.HIDDEN_LAYERS, 
+                Config.OUTPUT_DIM,
+                activation=Config.ENHANCED_ACTIVATION,
+                use_attention=Config.USE_ATTENTION
+            )
+        else:
+            print("📊 使用原始Dueling DQN模型")
+            self.policy_net = DuelingDQN(input_dim, Config.HIDDEN_LAYERS, Config.OUTPUT_DIM)
+            self.target_net = DuelingDQN(input_dim, Config.HIDDEN_LAYERS, Config.OUTPUT_DIM)
+        
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         
@@ -187,10 +210,17 @@ class DuelingDDQNAgent:
         self.target_net.load_state_dict(self.policy_net.state_dict())
     
     def save_model(self, is_best=False):
-        """保存模型（包含Dueling信息）"""
+        """保存模型（支持增强版架构）"""
         suffix = f"_best_{self.best_score}.pth" if is_best else ".pth"
         score = self.scores[-1] if self.scores else 0
-        filename = f"snake_dueling_dqn_ep{self.episode}_sc{score}{suffix}"
+        
+        # 根据使用的模型类型选择文件名前缀
+        if Config.USE_ENHANCED_MODEL:
+            filename = f"snake_enhanced_dqn_ep{self.episode}_sc{score}{suffix}"
+            model_type = 'enhanced_dueling_dqn'
+        else:
+            filename = f"snake_dueling_dqn_ep{self.episode}_sc{score}{suffix}"
+            model_type = 'dueling_dqn'
         
         # 保存完整检查点
         checkpoint = {
@@ -200,11 +230,14 @@ class DuelingDDQNAgent:
             'episode': self.episode,
             'best_score': self.best_score,
             'scores': self.scores,
-            'model_type': 'dueling_dqn',
+            'model_type': model_type,
             'config': {
                 'hidden_layers': Config.HIDDEN_LAYERS,
                 'learning_rate': Config.LEARNING_RATE,
-                'gamma': Config.GAMMA
+                'gamma': Config.GAMMA,
+                'use_enhanced_model': Config.USE_ENHANCED_MODEL,
+                'use_attention': Config.USE_ATTENTION if Config.USE_ENHANCED_MODEL else False,
+                'enhanced_activation': Config.ENHANCED_ACTIVATION if Config.USE_ENHANCED_MODEL else 'relu'
             }
         }
         
@@ -213,51 +246,99 @@ class DuelingDDQNAgent:
         
         # 保存最佳模型（简化版）
         if is_best:
-            best_path = os.path.join(Config.MODEL_DIR, 'snake_dueling_dqn_best.pth')
+            if Config.USE_ENHANCED_MODEL:
+                best_path = os.path.join(Config.MODEL_DIR, 'snake_enhanced_dqn_best.pth')
+                model_name = "增强版Dueling DQN"
+            else:
+                best_path = os.path.join(Config.MODEL_DIR, 'snake_dueling_dqn_best.pth')
+                model_name = "Dueling DQN"
+            
             torch.save(checkpoint, best_path)
-            print(f"新的最佳Dueling DQN模型已保存: {best_path}")
-            print(f"Dueling DQN模型已保存: {path}")
+            print(f"新的最佳{model_name}模型已保存: {best_path}")
+        
+        print(f"{model_name}模型已保存: {path}")
     
     def load_model(self, filename=None):
-        """加载模型"""
+        """加载模型（支持增强版和旧版架构）"""
         if filename is None:
-            filename = 'snake_dueling_dqn_best.pth'
+            # 根据当前配置选择默认模型文件
+            if Config.USE_ENHANCED_MODEL:
+                filename = 'snake_enhanced_dqn_best.pth'
+            else:
+                filename = 'snake_dueling_dqn_best.pth'
         
         path = os.path.join(Config.MODEL_DIR, filename)
-        if os.path.exists(path):
-            try:
-                checkpoint = torch.load(path, map_location=Config.device)
+        if not os.path.exists(path):
+            print(f"模型文件不存在: {path}")
+            return False
+            
+        try:
+            checkpoint = torch.load(path, map_location=Config.device)
+            
+            # 获取模型类型
+            model_type = checkpoint.get('model_type', 'dueling_dqn')
+            
+            # 检查模型类型是否与当前配置匹配
+            if Config.USE_ENHANCED_MODEL and model_type != 'enhanced_dueling_dqn':
+                print("⚠️  警告：尝试在增强版模式下加载旧版模型")
+                print("建议：切换USE_ENHANCED_MODEL=False或使用增强版预训练模型")
                 
-                if 'model_type' in checkpoint and checkpoint['model_type'] == 'dueling_dqn':
-                    self.policy_net.load_state_dict(checkpoint['model_state_dict'])
-                    
-                    if 'optimizer_state_dict' in checkpoint:
-                        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                    
-                    if 'scheduler_state_dict' in checkpoint:
-                        self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-                    
-                    if 'episode' in checkpoint:
-                        self.episode = checkpoint['episode']
-                    
-                    if 'best_score' in checkpoint:
-                        self.best_score = checkpoint['best_score']
-                    
-                    if 'scores' in checkpoint:
-                        self.scores = checkpoint['scores']
-                    
-                    self.policy_net.eval()
-                    print(f"Dueling DQN模型已加载: {path}")
-                    print(f"当前最佳分数: {self.best_score}")
-                    return True
-                else:
-                    print("尝试加载的模型不是Dueling DQN格式")
+            if not Config.USE_ENHANCED_MODEL and model_type == 'enhanced_dueling_dqn':
+                print("⚠️  警告：尝试在旧版模式下加载增强版模型")
+                print("建议：切换USE_ENHANCED_MODEL=True")
+            
+            # 尝试加载模型权重
+            try:
+                self.policy_net.load_state_dict(checkpoint['model_state_dict'])
+            except RuntimeError as e:
+                if "size mismatch" in str(e):
+                    print(f"❌ 架构不匹配: {e}")
+                    print("解决方案：")
+                    print("1. 删除旧模型文件重新开始训练")
+                    print("2. 切换USE_ENHANCED_MODEL配置以匹配模型")
+                    print("3. 使用--fresh参数强制重新训练")
                     return False
-                    
-            except Exception as e:
-                print(f"❌ 加载模型时出错: {e}")
-                return False
-        return False
+                else:
+                    raise e
+            
+            # 加载优化器状态
+            if 'optimizer_state_dict' in checkpoint:
+                try:
+                    self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                except Exception as e:
+                    print(f"⚠️  优化器状态加载失败: {e}")
+                    print("将使用新的优化器状态")
+            
+            # 加载调度器状态
+            if 'scheduler_state_dict' in checkpoint:
+                try:
+                    self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                except Exception as e:
+                    print(f"⚠️  学习率调度器加载失败: {e}")
+            
+            # 加载训练状态
+            if 'episode' in checkpoint:
+                self.episode = checkpoint['episode']
+            
+            if 'best_score' in checkpoint:
+                self.best_score = checkpoint['best_score']
+            
+            if 'scores' in checkpoint:
+                self.scores = checkpoint['scores']
+            
+            self.policy_net.eval()
+            
+            # 显示加载信息
+            model_name = "增强版Dueling DQN" if model_type == 'enhanced_dueling_dqn' else "Dueling DQN"
+            print(f"✅ {model_name}模型已加载: {path}")
+            print(f"当前最佳分数: {self.best_score}")
+            print(f"训练局数: {self.episode}")
+            
+            return True
+                
+        except Exception as e:
+            print(f"❌ 加载模型时出错: {e}")
+            return False
     
     def record_score(self, score):
         """记录分数"""
