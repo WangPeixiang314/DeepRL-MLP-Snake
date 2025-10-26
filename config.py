@@ -19,7 +19,7 @@ class Config:
     SPEED = 600
     
     # 模型参数
-    HIDDEN_LAYERS = [128, 64, 32, 16, 8]  # 隐藏层配置
+    HIDDEN_LAYERS = [128, 64]  # 隐藏层配置
     OUTPUT_DIM = 3   # [直行, 右转, 左转]
     
     # 训练参数

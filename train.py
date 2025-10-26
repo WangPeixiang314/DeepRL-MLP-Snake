@@ -1,3 +1,11 @@
+# -*- coding: utf-8 -*-
+import sys
+import os
+# 设置Python默认编码为UTF-8
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+
 import logging
 import os
 import time

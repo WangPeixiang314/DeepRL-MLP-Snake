@@ -4,7 +4,7 @@ import numpy as np
 import pygame
 
 from config import Config
-from help import distance_nb, is_collision_nb, random_position_nb, place_food_nb, step_logic_nb
+from help import distance_nb, random_position_nb, place_food_nb, step_logic_nb
 from direction import Direction
 from help import get_head_pos_nb, get_food_pos_nb, get_relative_distance_nb, get_manhattan_distance_nb,\
     get_direction_onehot_nb, get_eight_direction_dangers_nb, get_boundary_distances_nb, get_snake_length_nb, \
@@ -43,12 +43,27 @@ class SnakeGame:
         self.direction = Direction.RIGHT
         self.head = self._random_position()
         
-        # 初始化蛇身
-        self.snake = [
-            self.head,
-            (self.head[0] - Config.BLOCK_SIZE, self.head[1]),
-            (self.head[0] - Config.BLOCK_SIZE * 2, self.head[1])
-        ]
+        # 初始化循环数组 - 用于存储蛇身位置
+        self.max_snake_length = Config.GRID_WIDTH * Config.GRID_HEIGHT  # 蛇最大可能长度
+        self.snake_body = [(0, 0)] * self.max_snake_length  # 固定大小的循环数组
+        self.snake_start = 0  # 蛇头在循环数组中的索引
+        self.snake_length = 3  # 当前蛇长度
+        
+        # 初始化蛇身位置
+        self.snake_body[0] = self.head
+        self.snake_body[1] = (self.head[0] - Config.BLOCK_SIZE, self.head[1])
+        self.snake_body[2] = (self.head[0] - Config.BLOCK_SIZE * 2, self.head[1])
+        
+        # 初始化位图 - 用于O(1)碰撞检测
+        self.grid_width = self.width // Config.BLOCK_SIZE
+        self.grid_height = self.height // Config.BLOCK_SIZE
+        self.occupied = np.zeros((self.grid_width, self.grid_height), dtype=np.bool_)
+        
+        # 标记蛇身占据的位置
+        for i in range(self.snake_length):
+            x, y = self.snake_body[i]
+            grid_x, grid_y = x // Config.BLOCK_SIZE, y // Config.BLOCK_SIZE
+            self.occupied[grid_x, grid_y] = True
         
         self.score = 0
         self.food = self._place_food()
@@ -63,22 +78,54 @@ class SnakeGame:
         return random_position_nb(self.width, self.height, Config.BLOCK_SIZE)
 
     def _place_food(self):
-        """放置食物，避开蛇身"""
-        return place_food_nb(self.snake, self.width, self.height, Config.BLOCK_SIZE)
+        """放置食物，避开蛇身 - 使用位图实现O(1)时间复杂度"""
+        grid_width = self.width // Config.BLOCK_SIZE
+        grid_height = self.height // Config.BLOCK_SIZE
+        max_attempts = 1000
+        
+        for _ in range(max_attempts):
+            food_x = np.random.randint(0, grid_width) * Config.BLOCK_SIZE
+            food_y = np.random.randint(0, grid_height) * Config.BLOCK_SIZE
+            food_grid_x = food_x // Config.BLOCK_SIZE
+            food_grid_y = food_y // Config.BLOCK_SIZE
+            
+            # 使用位图检查食物是否与蛇身重叠 - O(1)时间复杂度
+            if not self.occupied[food_grid_x, food_grid_y]:
+                return (food_x, food_y)
+        
+        # 如果找不到合适位置，返回默认位置
+        return (Config.BLOCK_SIZE, Config.BLOCK_SIZE)
 
     def _calc_distance(self, pos1, pos2):
         """计算两点之间的曼哈顿距离"""
         return distance_nb(pos1, pos2)
     
     def _is_collision(self, pos=None):
-        """检测碰撞"""
+        """检测碰撞 - O(1)时间复杂度"""
         if pos is None:
             pos = self.head
-        return is_collision_nb(self.snake, self.width, self.height, pos)
+        
+        # 边界检查
+        if (pos[0] >= self.width or pos[0] < 0 or 
+            pos[1] >= self.height or pos[1] < 0):
+            return True
+        
+        # 使用位图进行O(1)碰撞检测
+        grid_x, grid_y = pos[0] // Config.BLOCK_SIZE, pos[1] // Config.BLOCK_SIZE
+        return self.occupied[grid_x, grid_y]
+    
+    def _get_snake_list(self):
+        """获取蛇身列表 - 用于兼容原有代码"""
+        snake = []
+        for i in range(self.snake_length):
+            idx = (self.snake_start + i) % self.max_snake_length
+            snake.append(self.snake_body[idx])
+        return snake
     
     def get_state(self):
         grid_area = Config.GRID_WIDTH * Config.GRID_HEIGHT
         grid_size = Config.BLOCK_SIZE
+        snake = self._get_snake_list()  # 获取蛇身列表用于兼容性
         
         # 使用numba加速函数提取状态特征
         danger = np.array([
@@ -90,6 +137,11 @@ class SnakeGame:
                             self.head[1] + grid_size * -self.direction.value[0]))
         ], dtype=np.float32)
         
+        # 使用位图优化八方向危险检测
+        eight_direction_dangers = get_eight_direction_dangers_nb(
+            self.head, self.occupied, self.width, self.height, grid_size
+        )
+        
         # 合并所有状态特征
         return np.concatenate([
             danger,
@@ -98,17 +150,17 @@ class SnakeGame:
             get_relative_distance_nb(self.head, self.food, self.width, self.height),
             get_manhattan_distance_nb(self.head, self.food, self.width, self.height),
             get_direction_onehot_nb(self.direction.value),
-            get_eight_direction_dangers_nb(self.head, self.snake, self.width, self.height, grid_size),
+            eight_direction_dangers,
             get_boundary_distances_nb(self.head, self.width, self.height),
-            get_snake_length_nb(self.snake, grid_area),
-            get_free_space_ratio_nb(self.snake, grid_area),
-            get_local_grid_view_nb(self.head, self.snake, self.food, self.width, self.height, grid_size),
+            get_snake_length_nb(snake, grid_area),
+            get_free_space_ratio_nb(snake, grid_area),
+            get_local_grid_view_nb(self.head, snake, self.food, self.width, self.height, grid_size),
             get_action_history_onehot_nb(self.action_history)
         ])
     
     def step(self, action):
         """
-        执行游戏步骤
+        执行游戏步骤 - 使用O(1)时间复杂度的实现
         
         参数:
             action: 整数表示的动作 [0: 直行, 1: 右转, 2: 左转]
@@ -133,38 +185,94 @@ class SnakeGame:
                     pygame.quit()
                     return None, 0, True, self.score
         
-        # 2. 调用numba优化后的核心逻辑
-        (self.snake, self.head, new_dir_vec, self.food, 
-        self.steps_since_food, self.score, reward, done, 
-        self.prev_distance) = step_logic_nb(
-            self.snake,
-            self.head,
-            self.direction.value,
-            self.food,
-            self.steps_since_food,
-            self.score,
-            self.prev_distance,
-            self.width,
-            self.height,
-            Config.BLOCK_SIZE,
-            action,
-            Config.MAX_STEPS_WITHOUT_FOOD,
-            Config.FOOD_REWARD,
-            Config.COLLISION_PENALTY,
-            Config.PROGRESS_REWARD,
-            Config.STEP_PENALTY
-        )
+        # 2. 更新方向
+        directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]  # RIGHT, DOWN, LEFT, UP
+        current_vec = self.direction.value
+        current_idx = directions.index(current_vec) if current_vec in directions else 0
         
-        # 3. 更新方向枚举
+        if action == 0:  # 直行，方向不变
+            new_dir_vec = directions[current_idx]
+        elif action == 1:  # 右转
+            new_dir_vec = directions[(current_idx + 1) % 4]
+        elif action == 2:  # 左转
+            new_dir_vec = directions[(current_idx - 1) % 4]
+        else:
+            new_dir_vec = directions[current_idx]
+        
+        # 更新方向枚举
         for dir_enum in Direction:
             if dir_enum.value == new_dir_vec:
                 self.direction = dir_enum
                 break
         
-        # 5. 获取新状态
+        # 3. 计算新蛇头位置
+        dx, dy = new_dir_vec
+        new_head = (self.head[0] + dx * Config.BLOCK_SIZE, self.head[1] + dy * Config.BLOCK_SIZE)
+        
+        # 4. 检查碰撞 - O(1)时间复杂度
+        done = False
+        reward = Config.STEP_PENALTY
+        
+        # 边界碰撞检查
+        if (new_head[0] >= self.width or new_head[0] < 0 or 
+            new_head[1] >= self.height or new_head[1] < 0):
+            done = True
+            reward = Config.COLLISION_PENALTY
+        
+        # 自身碰撞检查 - 使用位图
+        if not done:
+            grid_x, grid_y = new_head[0] // Config.BLOCK_SIZE, new_head[1] // Config.BLOCK_SIZE
+            if self.occupied[grid_x, grid_y]:
+                done = True
+                reward = Config.COLLISION_PENALTY
+        
+        # 检查是否超过最大无食物步数
+        if not done and self.steps_since_food >= Config.MAX_STEPS_WITHOUT_FOOD:
+            done = True
+            reward = Config.COLLISION_PENALTY
+        
+        if done:
+            return self.get_state(), reward, done, self.score
+        
+        # 5. 更新蛇身 - 使用循环数组
+        # 计算新的蛇头索引（向前移动一位）
+        new_snake_start = (self.snake_start - 1) % self.max_snake_length
+        self.snake_body[new_snake_start] = new_head
+        
+        # 标记新蛇头位置
+        self.occupied[grid_x, grid_y] = True
+        
+        # 检查是否吃到食物
+        if new_head == self.food:
+            # 吃到食物，蛇身增长
+            self.snake_length += 1
+            self.score += 1
+            reward = Config.FOOD_REWARD
+            self.steps_since_food = 0
+            self.food = self._place_food()
+            self.prev_distance = self._calc_distance(new_head, self.food)
+        else:
+            # 没吃到食物，移除蛇尾
+            tail_idx = (self.snake_start + self.snake_length - 1) % self.max_snake_length
+            tail_x, tail_y = self.snake_body[tail_idx]
+            tail_grid_x, tail_grid_y = tail_x // Config.BLOCK_SIZE, tail_y // Config.BLOCK_SIZE
+            self.occupied[tail_grid_x, tail_grid_y] = False
+            
+            # 计算距离奖励
+            distance = self._calc_distance(new_head, self.food)
+            reward += Config.PROGRESS_REWARD * (self.prev_distance - distance)
+            self.prev_distance = distance
+            
+            self.steps_since_food += 1
+        
+        # 更新蛇头位置和起始索引
+        self.head = new_head
+        self.snake_start = new_snake_start
+        
+        # 6. 获取新状态
         next_state = self.get_state()
         
-        # 6. 渲染游戏
+        # 7. 渲染游戏
         self.render()
         
         return next_state, reward, done, self.score
@@ -182,8 +290,9 @@ class SnakeGame:
         for y in range(0, self.height, Config.BLOCK_SIZE):
             pygame.draw.line(self.display, (40, 40, 40), (0, y), (self.width, y))
         
-        # 绘制蛇
-        for i, pos in enumerate(self.snake):
+        # 绘制蛇 - 使用循环数组
+        snake = self._get_snake_list()
+        for i, pos in enumerate(snake):
             color = (0, 200, 0) if i == 0 else (0, 100, 255)  # 头部绿色，身体蓝色
             pygame.draw.rect(self.display, color, 
                            pygame.Rect(pos[0], pos[1], Config.BLOCK_SIZE, Config.BLOCK_SIZE))

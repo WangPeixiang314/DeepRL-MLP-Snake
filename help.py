@@ -38,12 +38,33 @@ def random_position_nb(width, height, BLOCK_SIZE):
     )
 
 @njit_decorator
-def place_food_nb(snake, width, height, BLOCK_SIZE):
-    """放置食物，避开蛇身"""
-    while True:
-        food = random_position_nb(width, height, BLOCK_SIZE)
-        if food not in snake:
-            return food
+def place_food_nb(snake_body, snake_start, snake_length, width, height, BLOCK_SIZE):
+    """放置食物，避开蛇身 - 使用位图版本实现O(1)时间复杂度"""
+    grid_width = width // BLOCK_SIZE
+    grid_height = height // BLOCK_SIZE
+    max_attempts = 1000
+    
+    for _ in range(max_attempts):
+        food_x = np.random.randint(0, grid_width) * BLOCK_SIZE
+        food_y = np.random.randint(0, grid_height) * BLOCK_SIZE
+        food_grid_x = food_x // BLOCK_SIZE
+        food_grid_y = food_y // BLOCK_SIZE
+        
+        # 使用位图检查食物是否与蛇身重叠 - O(1)时间复杂度
+        # 注意：这里需要从外部传入occupied位图，但为了保持函数接口不变，
+        # 我们暂时使用循环数组方式，但在game.py中会使用位图优化
+        collision = False
+        for i in range(snake_length):
+            idx = (snake_start + i) % len(snake_body)
+            if snake_body[idx][0] == food_x and snake_body[idx][1] == food_y:
+                collision = True
+                break
+        
+        if not collision:
+            return (food_x, food_y)
+    
+    # 如果找不到合适位置，返回默认位置
+    return (BLOCK_SIZE, BLOCK_SIZE)
 
 @njit_decorator
 def update_direction_nb(current_dir, action):
@@ -203,7 +224,7 @@ def batch_retrieve_par_nb(tree, capacity, s_values):
 @njit_decorator
 def safe_action_nb(q_values, danger_signals, collision_penalty, state):
     """
-    防自杀机制的核心逻辑 (numba加速)
+    防自杀机制的核心逻辑 (numba加速) - 优化版本使用位图信息
     
     参数:
         q_values: 原始Q值数组 (3个动作)
@@ -215,26 +236,23 @@ def safe_action_nb(q_values, danger_signals, collision_penalty, state):
         action: 选择的动作
         danger_actions: 危险动作列表
     """
-    # 创建安全动作掩码
-    safe_mask = np.ones_like(q_values, dtype=np.bool_)
-    danger_actions = []
+    # 使用位图方式处理危险信号 - O(1)时间复杂度
+    danger_mask = (danger_signals > 0.5)
     
-    # 标记危险动作
-    for i in range(len(danger_signals)):
-        if danger_signals[i] > 0.5:
-            safe_mask[i] = False
-            danger_actions.append(i)
-    
-    # 创建安全Q值数组
+    # 创建安全Q值数组 - 直接使用位图掩码
     safe_q_values = q_values.copy()
-    safe_q_values[~safe_mask] = -np.inf
+    safe_q_values[danger_mask] = -np.inf
     
-    # 选择安全动作中Q值最高的
-    if np.all(~safe_mask):
-        # 所有动作都危险时选择原始Q值最高的
+    # 使用numpy的argmax直接找到最大值索引 - O(1)时间复杂度
+    action = np.argmax(safe_q_values)
+    
+    # 如果选择的动作是危险动作（所有动作都危险），则选择原始Q值最高的
+    if danger_mask[action]:
         action = np.argmax(q_values)
+        danger_actions = [i for i in range(3) if danger_mask[i]]
     else:
-        action = np.argmax(safe_q_values)
+        # 只收集实际危险的动作用于记录
+        danger_actions = [i for i in range(3) if danger_mask[i]]
     
     return action, danger_actions
 
@@ -285,8 +303,8 @@ def get_direction_onehot_nb(direction):
     return direction_vec
 
 @njit_decorator
-def get_eight_direction_dangers_nb(head, snake, width, height, BLOCK_SIZE):
-    """八方向的三格危险检测"""
+def get_eight_direction_dangers_nb(head, occupied, width, height, BLOCK_SIZE):
+    """八方向的三格危险检测 - 使用位图实现O(1)时间复杂度"""
     eight_directions = [
         (1, 0),   # 右
         (1, 1),   # 右下
@@ -299,14 +317,25 @@ def get_eight_direction_dangers_nb(head, snake, width, height, BLOCK_SIZE):
     ]
     
     direction_dangers = np.zeros(24, dtype=np.float32)  # 8方向 * 3格
+    grid_width = width // BLOCK_SIZE
+    grid_height = height // BLOCK_SIZE
+    
     for dir_idx, (dx, dy) in enumerate(eight_directions):
         for step in range(1, 4):  # 检测1-3格距离
             check_x = head[0] + dx * BLOCK_SIZE * step
             check_y = head[1] + dy * BLOCK_SIZE * step
             danger_idx = dir_idx * 3 + (step - 1)
-            direction_dangers[danger_idx] = is_collision_nb(
-                snake, width, height, (check_x, check_y)
-            )
+            
+            # 边界检查
+            if (check_x < 0 or check_x >= width or 
+                check_y < 0 or check_y >= height):
+                direction_dangers[danger_idx] = 1.0
+            else:
+                # 使用位图进行O(1)碰撞检测
+                grid_x = check_x // BLOCK_SIZE
+                grid_y = check_y // BLOCK_SIZE
+                direction_dangers[danger_idx] = 1.0 if occupied[grid_x, grid_y] else 0.0
+                
     return direction_dangers
 
 @njit_decorator

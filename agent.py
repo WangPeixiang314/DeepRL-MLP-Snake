@@ -153,7 +153,7 @@ class DQNAgent:
             print(f"新记录! 分数: {score}")
         
         # 定期保存模型
-        if self.episode % 5 == 0:
+        if self.episode % 200 == 0:
             self.save_model()
         
         # 定期更新目标网络
